@@ -1,7 +1,7 @@
 #define PI 3.14159
 #define STEPS 128
-#define MAX_MARCH 100.0
-#define HIT_DISTANCE 0.01
+#define MAX_MARCH 60.0
+#define HIT_DISTANCE 0.001
 
 #define LIGHT_DIRECTION normalize(vec3(0.8, 1, 1))
 #define LIGHT_COLOR vec3(1, 1, 0.8)
@@ -19,18 +19,19 @@ struct Planet {
     float[4] levels;
     float weight;
     float offset;
+    float minimum;
 };
 
 const vec3[5]  EARTH_COLORS =  vec3[] (vec3(72, 74, 119), vec3(77, 101, 180), vec3(35, 144, 99), vec3(30, 188, 115),
                                         vec3(255, 255, 255));
-const float[4] EARTH_LEVELS = float[] (0.35, 0.45, 0.53, 0.63);
+const float[4] EARTH_LEVELS = float[] (0.41, 0.45, 0.53, 0.63);
 
 const vec3[5]  MOON_COLORS =  vec3[] (vec3(69, 41, 63), vec3(107, 62, 117), vec3(127, 112, 128), vec3(155, 171, 178),
                                        vec3(255, 255, 255));
 const float[4] MOON_LEVELS = float[] (0.2, 0.35, 0.4, 0.8);
 
-#define EARTH Planet(vec3(0, 2, 0), 2.0, vec3(PI/4.0, 0.0, 0.0), EARTH_COLORS, EARTH_LEVELS, 0.4, 0.0)
-#define MOON  Planet(vec3(8, 4, 0), 1.1, vec3(PI/4.0, 0.0, 0.0),  MOON_COLORS,  MOON_LEVELS, 0.3, 0.3)
+#define EARTH Planet(vec3(0, 2, 0), 2.0, vec3(PI/8.0, 0.0, 0.0), EARTH_COLORS, EARTH_LEVELS, 0.4, 0.0, 0.45)
+#define MOON  Planet(vec3(8, 4, 0), 1.1, vec3(PI/8.0, 0.0, PI/2.0),  MOON_COLORS,  MOON_LEVELS, 0.3, 0.3, 0.0)
 
 #define TOTAL_PLANETS 2
 Planet[TOTAL_PLANETS] PLANETS = Planet[](EARTH, MOON);
@@ -59,7 +60,7 @@ mat3 rotate_z(float theta) {
 
 float samplePerlin(vec3 uv) {
     float[4] zoom    = float[] (0.1, 0.2, 0.6, 1.0);
-    float[4] weights = float[] (0.4, 0.3, 0.2, 0.1);
+    float[4] weights = float[] (0.4, 0.4, 0.1, 0.1);
     
     float value = 0.0;
     
@@ -94,7 +95,7 @@ vec2 sphereUV(vec3 p) {
 
 float planetNoise(vec3 p, Planet planet) {
     mat3 x = rotate_x(planet.rotation.x);
-    mat3 y = rotate_y(planet.rotation.y);
+    mat3 y = rotate_y(planet.rotation.y - iTime / 1.333);
     mat3 z = rotate_z(planet.rotation.z);
     p = z * y * x * p;
     vec3 n = normalize(p);
@@ -103,7 +104,7 @@ float planetNoise(vec3 p, Planet planet) {
 
 float sdPlanet(vec3 p, Planet planet) {
     vec3 n = normalize(p);
-    float extra = planetNoise(p, planet);
+    float extra = max(planet.minimum, planetNoise(p, planet));
  
     return length(p - n * extra * planet.weight) - planet.size;
 }
@@ -113,9 +114,9 @@ vec2 select(vec2 d1, vec2 d2) {
 }
 
 vec2 world(vec3 p) {
-    vec2 res = vec2(p.y + 10.0, -1);
+    vec2 res = vec2(sdPlanet(p - PLANETS[0].position, PLANETS[0]), 0);
     
-    for (int i = 0; i < TOTAL_PLANETS; i++) {
+    for (int i = 1; i < TOTAL_PLANETS; i++) {
         float sphere = sdPlanet(p - PLANETS[i].position, PLANETS[i]);
         res = select(res, vec2(sphere, i));
     }
@@ -124,7 +125,7 @@ vec2 world(vec3 p) {
 }
 
 vec3 get_normal(in vec3 p) {
-    const vec3 s = vec3(0.1, 0.0, 0.0);
+    const vec3 s = vec3(0.01, 0.0, 0.0);
 
     float g_x = world(p + s.xyy).x - world(p - s.xyy).x;
     float g_y = world(p + s.yxy).x - world(p - s.yxy).x;
@@ -139,8 +140,8 @@ float specular(vec3 cam, vec3 pos, vec3 normal) {
     vec3 viewDir = normalize(cam - pos);
     vec3 reflectDir = reflect(-LIGHT_DIRECTION, normal);
     
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
-    return 0.5 * spec;
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 6.0);
+    return 0.75 * spec;
 }
 
 float diffuse(vec3 normal) {
@@ -174,7 +175,7 @@ vec4 raymarch(in vec3 ro, in vec3 rd) {
 }
 
 float shadow(vec3 ro, vec3 rd) {
-    float traveled = 0.1;
+    float traveled = 0.3;
     
     float res = 1.0;
     
@@ -185,6 +186,9 @@ float shadow(vec3 ro, vec3 rd) {
         
         if (max_travel < HIT_DISTANCE) {
             return 0.0;
+        }
+        if (traveled > MAX_MARCH) {
+            break;
         }
         
         res = min(res, 2.0 * max_travel / traveled);
@@ -198,6 +202,7 @@ float shadow(vec3 ro, vec3 rd) {
 vec4 render(vec2 uv, float time) {
     uv *= 0.8;
 
+    time = time / 2.0;
     vec3 ro = vec3(cos(time) * DISTANCE, DISTANCE * 5.0 / 12.0, sin(time) * DISTANCE);
     vec3 rd = normalize(vec3(uv, 1.0));
     
@@ -219,8 +224,8 @@ vec4 render(vec2 uv, float time) {
     if (march.w < -0.1) {
         vec2 u = sphereUV(rd);
         float stars = samplePerlin(u * 120.0);
-        float mult = (stars > 0.7) ? (stars - 0.4) : 0.0;
-        return vec4(mult * vec3(0.6 + mult, 0.6 + mult, 0.8), 1.0);
+        float mult = (stars > 0.7) ? (stars - 0.7) : 0.0;
+        return vec4((mult + 0.05) * vec3(0.7 + mult, 0.7 + mult, 1.0), 1.0);
     }
     
     Planet planet = PLANETS[int(march.w)];
@@ -241,7 +246,7 @@ vec4 render(vec2 uv, float time) {
         lighting += specular(ro, pos, normal);
     }
     
-    float shadow_cast = shadow(pos, LIGHT_DIRECTION);
+    float shadow_cast = pow(shadow(pos, LIGHT_DIRECTION), 0.25);
     
     float gamma_corrected = pow(shadow_cast * lighting, 2.2);
     
